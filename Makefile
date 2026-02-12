@@ -20,6 +20,12 @@ APP_BINARY_DIR = $(APP_DIR)/$(APP_NAME)/Contents/MacOS
 APP_EXTRAS_DIR = $(APP_DIR)/$(APP_NAME)/Contents/Resources
 APP_COMPLETIONS_DIR = $(APP_EXTRAS_DIR)/completions
 
+MANAGER_DIR = manager-tauri
+MANAGER_APP_NAME = Alacritty Manager.app
+MANAGER_BUNDLE_DIR = $(MANAGER_DIR)/src-tauri/target/release/bundle/macos
+MANAGER_APP_SOURCE = $(MANAGER_BUNDLE_DIR)/$(MANAGER_APP_NAME)
+MANAGER_APP_DEST = $(APP_DIR)/$(MANAGER_APP_NAME)
+
 DMG_NAME = Alacritty.dmg
 DMG_DIR = $(RELEASE_DIR)/osx
 
@@ -41,8 +47,8 @@ $(TARGET)-universal:
 	MACOSX_DEPLOYMENT_TARGET="10.12" cargo build --release --target=aarch64-apple-darwin
 	@lipo target/{x86_64,aarch64}-apple-darwin/release/$(TARGET) -create -output $(APP_BINARY)
 
-app: $(APP_NAME)-native ## Create an Alacritty.app
-app-universal: $(APP_NAME)-universal ## Create a universal Alacritty.app
+app: $(APP_NAME)-native manager-app ## Create Alacritty.app + Tauri manager app
+app-universal: $(APP_NAME)-universal manager-app ## Create universal Alacritty.app + manager app
 $(APP_NAME)-%: $(TARGET)-%
 	@mkdir -p $(APP_BINARY_DIR)
 	@mkdir -p $(APP_EXTRAS_DIR)
@@ -59,6 +65,24 @@ $(APP_NAME)-%: $(TARGET)-%
 	@codesign --remove-signature "$(APP_DIR)/$(APP_NAME)"
 	@codesign --force --deep --sign - "$(APP_DIR)/$(APP_NAME)"
 	@echo "Created '$(APP_NAME)' in '$(APP_DIR)'"
+
+manager-app: ## Build and copy the Tauri manager app bundle
+	@if [ ! -d "$(MANAGER_DIR)" ]; then \
+		echo "Skipping manager build: '$(MANAGER_DIR)' not found"; \
+		exit 0; \
+	fi
+	@cd "$(MANAGER_DIR)" && npm install && npm run tauri build
+	@mkdir -p "$(APP_DIR)"
+	@if [ -d "$(MANAGER_APP_SOURCE)" ]; then \
+		rm -rf "$(MANAGER_APP_DEST)"; \
+		cp -fRp "$(MANAGER_APP_SOURCE)" "$(APP_DIR)"; \
+		codesign --remove-signature "$(MANAGER_APP_DEST)" >/dev/null 2>&1 || true; \
+		codesign --force --deep --sign - "$(MANAGER_APP_DEST)"; \
+		echo "Copied and signed '$(MANAGER_APP_NAME)' to '$(APP_DIR)'"; \
+	else \
+		echo "Manager bundle not found at '$(MANAGER_APP_SOURCE)'"; \
+		exit 1; \
+	fi
 
 dmg: $(DMG_NAME)-native ## Create an Alacritty.dmg
 dmg-universal: $(DMG_NAME)-universal ## Create a universal Alacritty.dmg
@@ -77,7 +101,7 @@ install-universal: $(INSTALL)-native ## Mount universal disk image
 $(INSTALL)-%: $(DMG_NAME)-%
 	@open $(DMG_DIR)/$(DMG_NAME)
 
-.PHONY: app binary clean dmg install $(TARGET) $(TARGET)-universal
+.PHONY: app binary clean dmg install manager-app $(TARGET) $(TARGET)-universal
 
 clean: ## Remove all build artifacts
 	@cargo clean
