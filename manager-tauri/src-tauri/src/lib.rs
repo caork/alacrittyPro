@@ -433,6 +433,7 @@ pub fn run() {
     append_debug_log("run:start");
 
     let run_result = tauri::Builder::default()
+        .plugin(tauri_plugin_liquid_glass::init())
         .manage(AppState::default())
         .setup(|app| {
             append_debug_log("setup:start");

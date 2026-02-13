@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { setLiquidGlassEffect, isGlassSupported, GlassMaterialVariant } from "tauri-plugin-liquid-glass-api";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
@@ -34,7 +35,6 @@ type UiState = {
   profiles: ServerProfile[];
   selectedId?: string;
   query: string;
-  showAdd: boolean;
   sidebarCollapsed: boolean;
   view: View;
 };
@@ -43,13 +43,67 @@ const state: UiState = {
   profiles: [],
   selectedId: undefined,
   query: "",
-  showAdd: false,
-  sidebarCollapsed: false,
+  sidebarCollapsed: true,
   view: "terminals",
 };
 
 // Terminal sessions keyed by profileId (or 'local')
 const sessions = new Map<string, SessionInfo>();
+
+// ── Add-panel state ──
+let addPanelClickLocked = false;
+let addPanelHideTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function showAddPanel() {
+  const panel = document.getElementById("add-panel");
+  const btn = document.getElementById("add-btn");
+  if (!panel || !btn) return;
+  if (addPanelHideTimeout) {
+    clearTimeout(addPanelHideTimeout);
+    addPanelHideTimeout = null;
+  }
+  const rect = btn.getBoundingClientRect();
+  panel.style.top = `${rect.top - 4}px`;
+  panel.style.left = `${rect.right + 10}px`;
+  panel.classList.add("visible");
+}
+
+function hideAddPanel() {
+  const panel = document.getElementById("add-panel");
+  if (!panel) return;
+  panel.classList.remove("visible");
+  addPanelClickLocked = false;
+  if (addPanelHideTimeout) {
+    clearTimeout(addPanelHideTimeout);
+    addPanelHideTimeout = null;
+  }
+  panel.querySelectorAll("input").forEach((el) => {
+    const input = el as HTMLInputElement;
+    if (input.type === "number") input.value = "22";
+    else input.value = "";
+  });
+}
+
+function tryHideAddPanel() {
+  if (addPanelClickLocked || hasAddPanelInput()) return;
+  hideAddPanel();
+}
+
+function scheduleHideAddPanel() {
+  if (addPanelClickLocked || hasAddPanelInput()) return;
+  addPanelHideTimeout = setTimeout(tryHideAddPanel, 200);
+}
+
+function hasAddPanelInput(): boolean {
+  const panel = document.getElementById("add-panel");
+  if (!panel) return false;
+  return Array.from(panel.querySelectorAll("input")).some((el) => {
+    const input = el as HTMLInputElement;
+    if (input.type === "number") return input.value !== "22";
+    if (input.type === "password") return input.value !== "";
+    return input.value.trim() !== "";
+  });
+}
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const appWindow = getCurrentWindow();
@@ -109,6 +163,15 @@ document.addEventListener("input", (e) => {
   if (!el?.closest(".xterm")) return;
   e.stopImmediatePropagation();
 }, true);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const panel = document.getElementById("add-panel");
+    if (panel?.classList.contains("visible")) {
+      hideAddPanel();
+    }
+  }
+});
 
 function createProfileId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -388,9 +451,11 @@ function render() {
           <span class="nav-icon">\u2699</span>
           <span class="nav-label">Settings</span>
         </button>
-        <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
       </aside>
 
+      <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
+
+      <div class="main-card">
       <header class="window-strip">
         <button class="expand-btn" id="expand-sidebar" title="Expand Sidebar" aria-label="Expand Sidebar">\u2261</button>
         <span class="window-strip-title">${escapeHtml(state.view === "terminals" ? (state.profiles.find((p) => p.id === state.selectedId)?.host ?? "Terminal") : state.view.charAt(0).toUpperCase() + state.view.slice(1))}</span>
@@ -403,46 +468,21 @@ function render() {
       <section class="main-view">
         ${renderMainPanel()}
       </section>
+      </div>
 
-      ${
-        state.showAdd
-          ? `
-        <section class="overlay" id="overlay">
-          <div class="modal" role="dialog" aria-modal="true">
-            <h3>Add Server</h3>
-            <p>Create a server profile for quick login.</p>
-            <div class="modal-grid">
-              <label>
-                <span>Name</span>
-                <input id="add-name" placeholder="Prod API" />
-              </label>
-              <label>
-                <span>Host/IP</span>
-                <input id="add-host" placeholder="10.0.0.5" />
-              </label>
-              <label>
-                <span>User</span>
-                <input id="add-user" placeholder="alice" />
-              </label>
-              <label>
-                <span>Port</span>
-                <input id="add-port" type="number" value="22" />
-              </label>
-              <label class="full-width">
-                <span>Password (MVP plaintext)</span>
-                <input id="add-password" type="password" />
-              </label>
-            </div>
-            <div class="modal-actions">
-              <button class="button-ghost" id="cancel-add">Cancel</button>
-              <button class="button-solid" id="confirm-add">Add Server</button>
-            </div>
-          </div>
-        </section>
-      `
-          : ""
-      }
     </main>
+    <div class="add-panel" id="add-panel">
+      <div class="add-panel-grid">
+        <label><span>Name</span><input id="add-name" placeholder="my-server" /></label>
+        <label><span>Host / IP</span><input id="add-host" placeholder="localhost" /></label>
+        <label><span>User</span><input id="add-user" placeholder="root" /></label>
+        <label><span>Port</span><input id="add-port" type="number" value="22" /></label>
+        <label class="full-width"><span>Password</span><input id="add-password" type="password" /></label>
+      </div>
+      <div class="add-panel-actions">
+        <button class="button-solid add-panel-submit" id="confirm-add">Add</button>
+      </div>
+    </div>
   `;
 
   bindEvents();
@@ -494,7 +534,7 @@ function bindEvents() {
       e.preventDefault();
       resizeHandle.classList.add("dragging");
       const onMouseMove = (ev: MouseEvent) => {
-        const newWidth = Math.max(200, Math.min(ev.clientX, 500));
+        const newWidth = Math.max(160, Math.min(ev.clientX, 500));
         document.documentElement.style.setProperty("--sidebar-width", `${newWidth}px`);
         // Refit terminal during drag
         const key = state.selectedId || "local";
@@ -587,56 +627,70 @@ function bindEvents() {
     };
   });
 
-  const addButton = app.querySelector<HTMLButtonElement>("#add-btn");
-  if (addButton) {
-    addButton.onclick = () => {
-      state.showAdd = true;
-      render();
-    };
-  }
+  // ── Add-panel: hover, click, and input handlers ──
+  const addBtn = app.querySelector<HTMLButtonElement>("#add-btn");
+  const addPanel = app.querySelector<HTMLElement>("#add-panel");
 
-  const cancelAdd = app.querySelector<HTMLButtonElement>("#cancel-add");
-  if (cancelAdd) {
-    cancelAdd.onclick = () => {
-      state.showAdd = false;
-      render();
-    };
-  }
+  if (addBtn && addPanel) {
+    addBtn.addEventListener("mouseenter", showAddPanel);
+    addBtn.addEventListener("mouseleave", scheduleHideAddPanel);
 
-  const confirmAdd = app.querySelector<HTMLButtonElement>("#confirm-add");
-  if (confirmAdd) {
-    confirmAdd.onclick = async () => {
-      const name = app.querySelector<HTMLInputElement>("#add-name")?.value.trim() ?? "";
-      const host = app.querySelector<HTMLInputElement>("#add-host")?.value.trim() ?? "";
-      const user = app.querySelector<HTMLInputElement>("#add-user")?.value.trim() || undefined;
-      const portRaw = app.querySelector<HTMLInputElement>("#add-port")?.value ?? "22";
-      const password = app.querySelector<HTMLInputElement>("#add-password")?.value || undefined;
-
-      if (!name || !host) {
-        return;
+    addPanel.addEventListener("mouseenter", () => {
+      if (addPanelHideTimeout) {
+        clearTimeout(addPanelHideTimeout);
+        addPanelHideTimeout = null;
       }
+    });
+    addPanel.addEventListener("mouseleave", scheduleHideAddPanel);
 
-      const portNumber = Number(portRaw);
-      const port = Number.isFinite(portNumber) && portNumber > 0 ? portNumber : 22;
+    addBtn.addEventListener("click", () => {
+      if (addPanel.classList.contains("visible") && addPanelClickLocked) {
+        hideAddPanel();
+      } else {
+        addPanelClickLocked = true;
+        showAddPanel();
+      }
+    });
 
-      const profile: ServerProfile = {
-        id: createProfileId(),
-        name,
-        host,
-        user,
-        port,
-        password,
-        tags: [],
-        favorite: false,
+    addPanel.querySelectorAll("input").forEach((input) => {
+      input.addEventListener("input", () => {
+        if (hasAddPanelInput()) addPanelClickLocked = true;
+      });
+    });
+
+    const confirmAdd = app.querySelector<HTMLButtonElement>("#confirm-add");
+    if (confirmAdd) {
+      confirmAdd.onclick = async () => {
+        const name = app.querySelector<HTMLInputElement>("#add-name")?.value.trim() ?? "";
+        const host = app.querySelector<HTMLInputElement>("#add-host")?.value.trim() ?? "";
+        const user = app.querySelector<HTMLInputElement>("#add-user")?.value.trim() || undefined;
+        const portRaw = app.querySelector<HTMLInputElement>("#add-port")?.value ?? "22";
+        const password = app.querySelector<HTMLInputElement>("#add-password")?.value || undefined;
+
+        if (!name || !host) return;
+
+        const portNumber = Number(portRaw);
+        const port = Number.isFinite(portNumber) && portNumber > 0 ? portNumber : 22;
+
+        const profile: ServerProfile = {
+          id: createProfileId(),
+          name,
+          host,
+          user,
+          port,
+          password,
+          tags: [],
+          favorite: false,
+        };
+
+        await invoke("upsert_profile", { profile });
+        await refreshProfiles();
+        state.selectedId = profile.id;
+        state.view = "terminals";
+        hideAddPanel();
+        render();
       };
-
-      await invoke("upsert_profile", { profile });
-      await refreshProfiles();
-      state.selectedId = profile.id;
-      state.view = "terminals";
-      state.showAdd = false;
-      render();
-    };
+    }
   }
 }
 
@@ -661,3 +715,18 @@ refreshProfiles().then(() => {
   // Auto-open local terminal on startup
   openTerminalSession();
 });
+
+// Apply liquid glass effect to the window (macOS 26+ only)
+isGlassSupported()
+  .then((supported) => {
+    if (!supported) return;
+    return setLiquidGlassEffect({
+      variant: GlassMaterialVariant.Sidebar,
+    }).then(() => {
+      // Make surfaces translucent so native glass shows through
+      document.documentElement.classList.add("liquid-glass");
+    });
+  })
+  .catch(() => {
+    // Silently ignore on unsupported platforms
+  });

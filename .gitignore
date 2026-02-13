@@ -4,3 +4,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+manager-tauri/dist/
+manager-tauri/src-tauri/icons/*.bak
+manager-tauri/.env
+manager-tauri/.env.*
+manager-tauri/profiles.json
+.DS_Store
