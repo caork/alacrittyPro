@@ -55,12 +55,12 @@ body {
   top: 0;
   left: 0;
   bottom: 0;
-  width: var(--sidebar-width);
+  width: calc(var(--sidebar-width) + 14px);
   z-index: 10;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 0 20px 12px 12px;
+  padding: 0 34px 12px 12px;
   gap: 10px;
   background: #060a12;
   transform: translateX(0);
@@ -129,6 +129,7 @@ body {
   border-radius: 12px 0 0 12px;
   overflow: hidden;
   z-index: 12;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.35);
   transition: margin 280ms cubic-bezier(0.2, 0.8, 0.2, 1),
               border-radius 280ms ease;
 }
