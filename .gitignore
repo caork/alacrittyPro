@@ -10,3 +10,4 @@ manager-tauri/.env
 manager-tauri/.env.*
 manager-tauri/profiles.json
 .DS_Store
+data/

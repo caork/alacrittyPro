@@ -18,6 +18,7 @@ chrono = { version = "0.4", features = ["serde"] }
 portable-pty = "0.9"
 base64 = "0.22"
 tauri-plugin-liquid-glass = "0.1"
+tauri-plugin-drag = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

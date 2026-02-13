@@ -27,6 +27,13 @@ struct ServerProfile {
     last_used_at: Option<DateTime<Utc>>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirEntry {
+    name: String,
+    is_dir: bool,
+}
+
 struct PtySession {
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn IoWrite + Send>,
@@ -347,6 +354,117 @@ fn close_pty(state: tauri::State<'_, AppState>, session_id: String) -> Result<()
     Ok(())
 }
 
+#[tauri::command]
+fn list_directory(path: Option<String>) -> Result<Vec<DirEntry>, String> {
+    let dir = path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+
+    let entries = fs::read_dir(&dir).map_err(|e| format!("Failed to read directory: {e}"))?;
+
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {e}"))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry
+            .file_type()
+            .map(|ft| ft.is_dir())
+            .unwrap_or(false);
+
+        if is_dir {
+            dirs.push(DirEntry { name, is_dir: true });
+        } else {
+            files.push(DirEntry { name, is_dir: false });
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    dirs.append(&mut files);
+
+    Ok(dirs)
+}
+
+#[tauri::command]
+fn rename_entry(old_path: String, new_path: String) -> Result<(), String> {
+    let src = Path::new(&old_path);
+    if !src.exists() {
+        return Err(format!("Source does not exist: {old_path}"));
+    }
+    let dest = Path::new(&new_path);
+    if dest.exists() {
+        return Err(format!("Destination already exists: {new_path}"));
+    }
+    fs::rename(src, dest).map_err(|e| format!("Rename failed: {e}"))
+}
+
+#[tauri::command]
+fn delete_entry(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {path}"));
+    }
+    if p.is_dir() {
+        fs::remove_dir_all(p).map_err(|e| format!("Delete directory failed: {e}"))
+    } else {
+        fs::remove_file(p).map_err(|e| format!("Delete file failed: {e}"))
+    }
+}
+
+#[tauri::command]
+fn move_entry(src: String, dest_dir: String) -> Result<(), String> {
+    let src_path = Path::new(&src);
+    if !src_path.exists() {
+        return Err(format!("Source does not exist: {src}"));
+    }
+    let file_name = src_path
+        .file_name()
+        .ok_or_else(|| "Cannot determine file name".to_string())?;
+    let dest_path = Path::new(&dest_dir).join(file_name);
+    if dest_path.exists() {
+        return Err(format!(
+            "Destination already exists: {}",
+            dest_path.display()
+        ));
+    }
+    fs::rename(src_path, &dest_path).map_err(|e| format!("Move failed: {e}"))
+}
+
+#[tauri::command]
+fn create_file(path: String) -> Result<(), String> {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| format!("Create file failed: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn create_dir(path: String) -> Result<(), String> {
+    fs::create_dir(&path).map_err(|e| format!("Create directory failed: {e}"))
+}
+
+#[tauri::command]
+fn open_file_default(path: String) -> Result<(), String> {
+    Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open file: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_in_vscode(path: String) -> Result<(), String> {
+    Command::new("code")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open in VS Code: {e}"))?;
+    Ok(())
+}
+
 fn escape_shell(input: &str) -> String {
     input.replace('"', "\\\"").replace('\'', "'\\''")
 }
@@ -434,6 +552,7 @@ pub fn run() {
 
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_liquid_glass::init())
+        .plugin(tauri_plugin_drag::init())
         .manage(AppState::default())
         .setup(|app| {
             append_debug_log("setup:start");
@@ -468,6 +587,14 @@ pub fn run() {
             write_pty,
             resize_pty,
             close_pty,
+            list_directory,
+            rename_entry,
+            delete_entry,
+            move_entry,
+            create_file,
+            create_dir,
+            open_file_default,
+            open_in_vscode,
         ])
         .run(tauri::generate_context!());
 
